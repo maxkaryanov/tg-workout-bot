@@ -18,6 +18,7 @@ DB_PATH = "bot.db"
 TZ = ZoneInfo("Europe/Helsinki")
 
 PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+NAME_WIDTH = 20  # фиксированная ширина имени
 
 # ================== DATE HELPERS ==================
 
@@ -69,6 +70,15 @@ async def get_all(chat_id: int):
         ) as cur:
             return await cur.fetchall()
 
+# ================== FORMAT HELPERS ==================
+
+def format_name(name: str) -> str:
+    """Обрезает имя до фиксированной ширины с троеточием"""
+    name = name or "—"
+    if len(name) <= NAME_WIDTH:
+        return name.ljust(NAME_WIDTH)
+    return name[:NAME_WIDTH - 1] + "…"
+
 # ================== RENDER TABLE ==================
 
 def render_table(rows):
@@ -78,8 +88,8 @@ def render_table(rows):
     header = (
         "🏁 Рейтинг обновлён\n"
         f"Дедлайн: {deadline} • недель осталось: {wl}\n\n"
-        " #  Участник               Сделано   Осталось  /нед\n"
-        "---------------------------------------------------"
+        f" #  {'Участник':<{NAME_WIDTH}}  Сделано   Осталось  /нед\n"
+        + "-" * (NAME_WIDTH + 39)
     )
 
     rows = list(rows)
@@ -90,10 +100,10 @@ def render_table(rows):
     for i, (name, done, goal) in enumerate(rows, 1):
         left = max(0, goal - done)
         per_week = math.ceil(left / wl) if left else 0
-        name = (name or "—")[:22]
 
         lines.append(
-            f"{i:>2}  {name:<22}  {done:>3}/{goal:<3}      {left:>3}     {per_week:>3}"
+            f"{i:>2}  {format_name(name)}  "
+            f"{done:>3}/{goal:<3}      {left:>3}     {per_week:>3}"
         )
 
     table = "\n".join(lines)
@@ -134,7 +144,9 @@ async def main():
         await save_progress(
             m.chat.id,
             m.from_user.id,
-            m.from_user.full_name or (m.from_user.username or str(m.from_user.id)),
+            m.from_user.full_name
+            or m.from_user.username
+            or str(m.from_user.id),
             done,
             goal
         )
