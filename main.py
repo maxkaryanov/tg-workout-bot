@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import aiosqlite
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -94,7 +94,7 @@ async def get_user_events(chat_id, user_id):
             rows = await cur.fetchall()
             return [datetime.fromisoformat(r[0]).date() for r in rows]
 
-# ================== MOTIVATION PHRASES ==================
+# ================== MOTIVATION ==================
 
 def streak_phrase(days):
     phrases = {
@@ -157,9 +157,10 @@ async def main():
         rows = await get_all(m.chat.id)
         await m.answer(render_table(rows))
 
-    @dp.message(F.text)
+    @dp.message()
     async def catch(m: Message):
-        match = PROGRESS_RE.search(m.text or "")
+        content = m.text or m.caption or ""
+        match = PROGRESS_RE.search(content)
         if not match:
             return
 
@@ -181,14 +182,14 @@ async def main():
         events = await get_user_events(m.chat.id, m.from_user.id)
 
         phrase = None
-        if len(events) >= 2 and events[0] == events[1] + timedelta(days=1):
-            streak = 1
-            for i in range(len(events) - 1):
-                if events[i] == events[i + 1] + timedelta(days=1):
-                    streak += 1
-                else:
-                    break
-            phrase = streak_phrase(streak)
+        streak = 1
+        for i in range(len(events) - 1):
+            if events[i] == events[i + 1] + timedelta(days=1):
+                streak += 1
+            else:
+                break
+
+        phrase = streak_phrase(streak) if streak >= 2 else None
 
         if not phrase:
             ws = week_start(today())
@@ -204,7 +205,7 @@ async def main():
 
     async def weekly_post(chat_id):
         rows = await get_all(chat_id)
-        await bot.send_message(chat_id, render_table(rows, title="🏁 Рейтинг обновлён"))
+        await bot.send_message(chat_id, render_table(rows))
 
     scheduler = AsyncIOScheduler(timezone=TZ)
     scheduler.add_job(
