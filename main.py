@@ -1,6 +1,5 @@
 import os
 import re
-import math
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -13,26 +12,16 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DB_PATH = "bot.db"
 TZ = ZoneInfo("Europe/Helsinki")
 
 PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
-NAME_WIDTH = 20  # фикс ширина имени (в символах, моноширинный шрифт)
-
-# ================== DATE HELPERS ==================
-def now():
-    return datetime.now(TZ)
-
-def next_jan_1():
-    d = now()
-    return datetime(d.year + 1, 1, 1, tzinfo=TZ)
-
-def weeks_left():
-    days = (next_jan_1().date() - now().date()).days
-    return max(1, math.ceil(days / 7))
+NAME_WIDTH = 22  # фиксированная ширина имени
 
 # ================== DATABASE ==================
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -57,7 +46,7 @@ async def save_progress(chat_id: int, user_id: int, name: str, done: int, goal: 
                 done=excluded.done,
                 goal=excluded.goal,
                 updated=excluded.updated
-        """, (chat_id, user_id, name, done, goal, now().isoformat(timespec="seconds")))
+        """, (chat_id, user_id, name, done, goal, datetime.now(TZ).isoformat(timespec="seconds")))
         await db.commit()
 
 async def get_all(chat_id: int):
@@ -69,40 +58,35 @@ async def get_all(chat_id: int):
             return await cur.fetchall()
 
 # ================== FORMAT ==================
+
 def format_name(name: str) -> str:
     name = (name or "—").strip()
     if len(name) <= NAME_WIDTH:
         return name.ljust(NAME_WIDTH)
-    # аккуратное троеточие, чтобы длина всегда была ровно NAME_WIDTH
-    return (name[:NAME_WIDTH - 1] + "…")
+    return name[:NAME_WIDTH - 1] + "…"
 
 def render_table(rows, title: str = "🏁 Рейтинг обновлён") -> str:
-    wl = weeks_left()
-    deadline = next_jan_1().date()
-
     header = (
-        f"{title}\n"
-        f"Дедлайн: {deadline} • недель осталось: {wl}\n\n"
-        f" #  {'Участник':<{NAME_WIDTH}}  Сделано   Осталось  /нед\n"
-        + "-" * (NAME_WIDTH + 39)
+        f"{title}\n\n"
+        f" #  {'Участник':<{NAME_WIDTH}}  Сделано\n"
+        + "-" * (NAME_WIDTH + 14)
     )
 
     rows = list(rows)
-    rows.sort(key=lambda r: -r[1])  # по "Сделано" по убыванию
+    rows.sort(key=lambda r: -r[1])  # сортировка по "Сделано"
 
     lines = [header]
+
     for i, (name, done, goal) in enumerate(rows, 1):
-        left = max(0, goal - done)
-        per_week = math.ceil(left / wl) if left else 0
         lines.append(
-            f"{i:>2}  {format_name(name)}  {done:>3}/{goal:<3}      {left:>3}     {per_week:>3}"
+            f"{i:>2}  {format_name(name)}  {done:>3}/{goal:<3}"
         )
 
     table_text = "\n".join(lines)
-    # экранируем HTML, чтобы имена с символами < > & не ломали разметку
     return f"<pre>{html.escape(table_text)}</pre>"
 
 # ================== MAIN ==================
+
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set (environment variable).")
@@ -114,11 +98,13 @@ async def main():
 
     last_chat_id = {"id": None}
 
+    # -------- /top --------
     @dp.message(Command("top"))
     async def top(m: Message):
         rows = await get_all(m.chat.id)
         await m.answer(render_table(rows), parse_mode="HTML")
 
+    # -------- catch X/Y --------
     @dp.message(F.text)
     async def catch(m: Message):
         match = PROGRESS_RE.search(m.text or "")
@@ -142,13 +128,19 @@ async def main():
         rows = await get_all(m.chat.id)
         await bot.send_message(m.chat.id, render_table(rows), parse_mode="HTML")
 
+    # -------- weekly autopost --------
     async def weekly_post(chat_id: int):
         rows = await get_all(chat_id)
-        await bot.send_message(chat_id, render_table(rows, title="🏋️ Лидерборд недели"), parse_mode="HTML")
+        await bot.send_message(
+            chat_id,
+            render_table(rows, title="🏋️ Лидерборд недели"),
+            parse_mode="HTML"
+        )
 
     scheduler = AsyncIOScheduler(timezone=TZ)
     scheduler.add_job(
-        lambda: asyncio.create_task(weekly_post(last_chat_id["id"])) if last_chat_id["id"] else None,
+        lambda: asyncio.create_task(weekly_post(last_chat_id["id"]))
+        if last_chat_id["id"] else None,
         trigger="cron",
         day_of_week="mon",
         hour=9,
@@ -157,6 +149,8 @@ async def main():
     scheduler.start()
 
     await dp.start_polling(bot)
+
+# ================== ENTRY ==================
 
 if __name__ == "__main__":
     asyncio.run(main())
