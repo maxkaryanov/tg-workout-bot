@@ -11,12 +11,15 @@ from aiogram.types import Message
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+# ================== CONFIG ==================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-print("ENV BOT_TOKEN PRESENT:", bool(BOT_TOKEN))
 DB_PATH = "bot.db"
 TZ = ZoneInfo("Europe/Helsinki")
 
 PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+# ================== DATE HELPERS ==================
 
 def now():
     return datetime.now(TZ)
@@ -28,6 +31,8 @@ def next_jan_1():
 def weeks_left():
     days = (next_jan_1().date() - now().date()).days
     return max(1, math.ceil(days / 7))
+
+# ================== DATABASE ==================
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -64,30 +69,37 @@ async def get_all(chat_id: int):
         ) as cur:
             return await cur.fetchall()
 
+# ================== RENDER TABLE ==================
+
 def render_table(rows):
     wl = weeks_left()
     deadline = next_jan_1().date()
 
-    lines = [
-        "🏁 Рейтинг обновлён",
-        f"Дедлайн: {deadline} • недель осталось: {wl}",
-        "",
-        " #  Участник            Сделано  Осталось  /нед"
-    ]
+    header = (
+        "🏁 Рейтинг обновлён\n"
+        f"Дедлайн: {deadline} • недель осталось: {wl}\n\n"
+        " #  Участник               Сделано   Осталось  /нед\n"
+        "---------------------------------------------------"
+    )
 
-    # сортируем по выполненным тренировкам (done) по убыванию
     rows = list(rows)
-    rows.sort(key=lambda r: -r[1])
+    rows.sort(key=lambda r: -r[1])  # по выполненным тренировкам
+
+    lines = [header]
 
     for i, (name, done, goal) in enumerate(rows, 1):
         left = max(0, goal - done)
         per_week = math.ceil(left / wl) if left else 0
-        short_name = (name or "—")[:18]
+        name = (name or "—")[:22]
+
         lines.append(
-            f"{i:>2}  {short_name:<18}  {done:>3}/{goal:<3}   {left:>5}   {per_week:>3}"
+            f"{i:>2}  {name:<22}  {done:>3}/{goal:<3}      {left:>3}     {per_week:>3}"
         )
 
-    return "\n".join(lines)
+    table = "\n".join(lines)
+    return f"<pre>{table}</pre>"
+
+# ================== MAIN ==================
 
 async def main():
     if not BOT_TOKEN:
@@ -95,16 +107,18 @@ async def main():
 
     await init_db()
 
-    bot = Bot(BOT_TOKEN)
+    bot = Bot(BOT_TOKEN, parse_mode="HTML")
     dp = Dispatcher()
 
-    # /top — показать таблицу
+    last_chat_id = {"id": None}
+
+    # -------- /top --------
     @dp.message(Command("top"))
     async def top(m: Message):
         rows = await get_all(m.chat.id)
         await m.answer(render_table(rows))
 
-    # ловим сообщения вида X/Y и сразу публикуем рейтинг
+    # -------- catch X/Y --------
     @dp.message(F.text)
     async def catch(m: Message):
         match = PROGRESS_RE.search(m.text or "")
@@ -112,10 +126,10 @@ async def main():
             return
 
         done, goal = map(int, match.groups())
-        if goal <= 0:
+        if goal <= 0 or done < 0 or done > goal:
             return
-        if done < 0 or done > goal:
-            return
+
+        last_chat_id["id"] = m.chat.id
 
         await save_progress(
             m.chat.id,
@@ -128,35 +142,31 @@ async def main():
         rows = await get_all(m.chat.id)
         await bot.send_message(m.chat.id, render_table(rows))
 
-    # понедельничный автопост в тот чат, где бот сейчас получает сообщения
-    # (если хочешь фиксировать чат — скажи, добавлю сохранение chat_id в БД/переменную)
+    # -------- weekly autopost --------
     async def weekly_post(chat_id: int):
         rows = await get_all(chat_id)
-        await bot.send_message(chat_id, render_table(rows).replace("🏁 Рейтинг обновлён", "🏋️ Лидерборд недели", 1))
+        text = render_table(rows).replace(
+            "🏁 Рейтинг обновлён",
+            "🏋️ Лидерборд недели",
+            1
+        )
+        await bot.send_message(chat_id, text)
 
     scheduler = AsyncIOScheduler(timezone=TZ)
     scheduler.add_job(
-        lambda: asyncio.create_task(weekly_post(last_chat_id["id"])) if last_chat_id["id"] else None,
+        lambda: asyncio.create_task(
+            weekly_post(last_chat_id["id"])
+        ) if last_chat_id["id"] else None,
         trigger="cron",
         day_of_week="mon",
         hour=9,
-        minute=0,
+        minute=0
     )
     scheduler.start()
 
-    # запоминаем последний чат, где был прогресс (для понедельничного поста)
-    last_chat_id = {"id": None}
-
-    # обёртка: обновляем last_chat_id в catch
-    original_catch = catch
-
-    @dp.message(F.text)
-    async def catch_with_chat(m: Message):
-        last_chat_id["id"] = m.chat.id
-        await original_catch(m)
-
-    # Важно: стартуем polling
     await dp.start_polling(bot)
+
+# ================== ENTRY ==================
 
 if __name__ == "__main__":
     asyncio.run(main())
