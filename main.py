@@ -83,7 +83,7 @@ def render_table(rows):
     )
 
     rows = list(rows)
-    rows.sort(key=lambda r: -r[1])  # по выполненным тренировкам
+    rows.sort(key=lambda r: -r[1])
 
     lines = [header]
 
@@ -97,7 +97,7 @@ def render_table(rows):
         )
 
     table = "\n".join(lines)
-    return f"<pre>{table}</pre>"
+    return f"```\n{table}\n```"
 
 # ================== MAIN ==================
 
@@ -107,7 +107,7 @@ async def main():
 
     await init_db()
 
-    bot = Bot(BOT_TOKEN, parse_mode="HTML")
+    bot = Bot(BOT_TOKEN)
     dp = Dispatcher()
 
     last_chat_id = {"id": None}
