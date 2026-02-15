@@ -3,7 +3,6 @@ import re
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import html
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F
@@ -18,7 +17,7 @@ DB_PATH = "bot.db"
 TZ = ZoneInfo("Europe/Helsinki")
 
 PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
-NAME_WIDTH = 22  # фиксированная ширина имени
+NAME_WIDTH = 22
 
 # ================== DATABASE ==================
 
@@ -37,7 +36,7 @@ async def init_db():
         """)
         await db.commit()
 
-async def save_progress(chat_id: int, user_id: int, name: str, done: int, goal: int):
+async def save_progress(chat_id, user_id, name, done, goal):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT INTO progress VALUES (?, ?, ?, ?, ?, ?)
@@ -46,10 +45,13 @@ async def save_progress(chat_id: int, user_id: int, name: str, done: int, goal: 
                 done=excluded.done,
                 goal=excluded.goal,
                 updated=excluded.updated
-        """, (chat_id, user_id, name, done, goal, datetime.now(TZ).isoformat(timespec="seconds")))
+        """, (
+            chat_id, user_id, name, done, goal,
+            datetime.now(TZ).isoformat(timespec="seconds")
+        ))
         await db.commit()
 
-async def get_all(chat_id: int):
+async def get_all(chat_id):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT name, done, goal FROM progress WHERE chat_id=?",
@@ -62,34 +64,33 @@ async def get_all(chat_id: int):
 def format_name(name: str) -> str:
     name = (name or "—").strip()
     if len(name) <= NAME_WIDTH:
-        return name.ljust(NAME_WIDTH)
+        return name
     return name[:NAME_WIDTH - 1] + "…"
 
-def render_table(rows, title: str = "🏁 Рейтинг обновлён") -> str:
-    header = (
-        f"{title}\n\n"
-        f" #  {'Участник':<{NAME_WIDTH}}  Сделано\n"
-        + "-" * (NAME_WIDTH + 14)
-    )
+def render_table(rows, title="🏁 Рейтинг обновлён"):
+    lines = [title, ""]
+
+    header = f"#  Участник{' ' * (NAME_WIDTH - 8)}Сделано"
+    sep = "-" * len(header)
+
+    lines.append(header)
+    lines.append(sep)
 
     rows = list(rows)
-    rows.sort(key=lambda r: -r[1])  # сортировка по "Сделано"
-
-    lines = [header]
+    rows.sort(key=lambda r: -r[1])
 
     for i, (name, done, goal) in enumerate(rows, 1):
         lines.append(
-            f"{i:>2}  {format_name(name)}  {done:>3}/{goal:<3}"
+            f"{i}. {format_name(name)} — {done}/{goal}"
         )
 
-    table_text = "\n".join(lines)
-    return f"<pre>{html.escape(table_text)}</pre>"
+    return "\n".join(lines)
 
 # ================== MAIN ==================
 
 async def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set (environment variable).")
+        raise RuntimeError("BOT_TOKEN is not set")
 
     await init_db()
 
@@ -98,13 +99,11 @@ async def main():
 
     last_chat_id = {"id": None}
 
-    # -------- /top --------
     @dp.message(Command("top"))
     async def top(m: Message):
         rows = await get_all(m.chat.id)
-        await m.answer(render_table(rows), parse_mode="HTML")
+        await m.answer(render_table(rows))
 
-    # -------- catch X/Y --------
     @dp.message(F.text)
     async def catch(m: Message):
         match = PROGRESS_RE.search(m.text or "")
@@ -126,15 +125,13 @@ async def main():
         )
 
         rows = await get_all(m.chat.id)
-        await bot.send_message(m.chat.id, render_table(rows), parse_mode="HTML")
+        await bot.send_message(m.chat.id, render_table(rows))
 
-    # -------- weekly autopost --------
-    async def weekly_post(chat_id: int):
+    async def weekly_post(chat_id):
         rows = await get_all(chat_id)
         await bot.send_message(
             chat_id,
-            render_table(rows, title="🏋️ Лидерборд недели"),
-            parse_mode="HTML"
+            render_table(rows, title="🏋️ Лидерборд недели")
         )
 
     scheduler = AsyncIOScheduler(timezone=TZ)
@@ -149,8 +146,6 @@ async def main():
     scheduler.start()
 
     await dp.start_polling(bot)
-
-# ================== ENTRY ==================
 
 if __name__ == "__main__":
     asyncio.run(main())
