@@ -12,6 +12,7 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+print("ENV BOT_TOKEN PRESENT:", bool(BOT_TOKEN))
 DB_PATH = "bot.db"
 TZ = ZoneInfo("Europe/Helsinki")
 
