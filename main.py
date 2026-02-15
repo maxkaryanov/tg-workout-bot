@@ -61,28 +61,18 @@ async def get_all(chat_id):
 
 # ================== FORMAT ==================
 
-def format_name(name: str) -> str:
+def short_name(name: str) -> str:
     name = (name or "—").strip()
-    if len(name) <= NAME_WIDTH:
-        return name
-    return name[:NAME_WIDTH - 1] + "…"
+    return name if len(name) <= NAME_WIDTH else name[:NAME_WIDTH - 1] + "…"
 
 def render_table(rows, title="🏁 Рейтинг обновлён"):
-    lines = [title, ""]
+    lines = [title, "", "#  Участник — Сделано"]
+    lines.append("-" * 28)
 
-    header = f"#  Участник{' ' * (NAME_WIDTH - 8)}Сделано"
-    sep = "-" * len(header)
-
-    lines.append(header)
-    lines.append(sep)
-
-    rows = list(rows)
-    rows.sort(key=lambda r: -r[1])
+    rows = sorted(rows, key=lambda r: -r[1])
 
     for i, (name, done, goal) in enumerate(rows, 1):
-        lines.append(
-            f"{i}. {format_name(name)} — {done}/{goal}"
-        )
+        lines.append(f"{i}. {short_name(name)} — {done}/{goal}")
 
     return "\n".join(lines)
 
@@ -131,7 +121,7 @@ async def main():
         rows = await get_all(chat_id)
         await bot.send_message(
             chat_id,
-            render_table(rows, title="🏋️ Лидерборд недели")
+            render_table(rows, title="🏁 Рейтинг обновлён")
         )
 
     scheduler = AsyncIOScheduler(timezone=TZ)
